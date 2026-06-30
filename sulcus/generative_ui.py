@@ -160,7 +160,7 @@ def history_trail(entries: List[AuditEntry]) -> str:
     for e in entries[:14]:
         is_sys = (e.actor_kind if isinstance(e.actor_kind, str) else e.actor_kind.value) == "SYSTEM"
         dot = VIOLET_SOFT if is_sys else GREEN
-        tag = "🧠 BRAIN" if is_sys else "👤 HUMAN"
+        tag = "BRAIN" if is_sys else "HUMAN"
         ts = e.timestamp.strftime("%H:%M")
         rows += f"""
         <div style="display:flex;gap:12px;padding:9px 0;border-bottom:1px solid #20263a;">
@@ -191,7 +191,7 @@ def terminal_console(lines: List[str]) -> str:
             c = "#FF7B7B"
         elif "CIRCADIAN" in ln:
             c = VIOLET_SOFT
-        elif "PASS" in ln or "✅" in ln or "GROUND" in ln:
+        elif "PASS" in ln or "GROUND" in ln:
             c = "#7CFC9B"
         elif ln.startswith("[SULCUS]"):
             c = "#9AD0FF"

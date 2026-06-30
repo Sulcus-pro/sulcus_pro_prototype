@@ -48,7 +48,7 @@ def run_consolidation(stream: IngestionStream, tick: int) -> Tuple[List[str], Li
 
     log.append("")
     log.append("[CIRCADIAN] ───────────────────────────────────────────────")
-    log.append("[CIRCADIAN] 🌙 Nightly Consolidation Loop — system entering sleep cycle.")
+    log.append("[CIRCADIAN] Nightly Consolidation Loop — system entering sleep cycle.")
     log.append("[CIRCADIAN] Phase 1/5  Sweeping raw ephemeral event log for conflicts...")
 
     # Identify the conflicting cluster.
@@ -81,7 +81,7 @@ def run_consolidation(stream: IngestionStream, tick: int) -> Tuple[List[str], Li
     log.append("[CIRCADIAN]   ↳ edge added:  launch.delay ──impacts──▶ campaign:linkedin-q3")
 
     log.append("[CIRCADIAN] Phase 5/5  Re-embedding consolidated state. Conflicts: 0.")
-    log.append("[CIRCADIAN] ✅ Consolidation complete — graph internally consistent. Waking up.")
+    log.append("[CIRCADIAN] Consolidation complete — graph internally consistent. Waking up.")
     log.append("[CIRCADIAN] ───────────────────────────────────────────────")
 
     audit.append(

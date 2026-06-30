@@ -107,8 +107,8 @@ class SulcusEngine:
         # 5) Toast summary.
         title = TICK_TITLES.get(tick, f"Tick {tick}")
         if self.report.eval_status in ("WARNING", "WARNING".lower()):
-            return f"⚠️ Tick {tick} — {title}: informational drift detected by Gate 2."
-        return f"✅ Tick {tick} — {title}: state mutated & reconciled (faithfulness {self.report.faithfulness:.2f})."
+            return f"Tick {tick} — {title}: informational drift detected by Gate 2."
+        return f"Tick {tick} — {title}: state mutated & reconciled (faithfulness {self.report.faithfulness:.2f})."
 
     # ------------------------------------------------------------------ #
     def reset(self) -> None:

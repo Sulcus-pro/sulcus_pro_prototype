@@ -37,7 +37,7 @@ def canvas_for_tick(tick: int) -> GenerativeCanvas:
         return GenerativeCanvas(
             tick=0,
             calendar=CalendarAsset(
-                title="🚀 Feature Launch v1.0",
+                title="Feature Launch v1.0",
                 iso_date="2026-07-03",
                 human_date="This Friday",
                 status=StatusTag.ON_TRACK,
@@ -71,7 +71,7 @@ def canvas_for_tick(tick: int) -> GenerativeCanvas:
             # Friday/On Track even though the codebase now contradicts it. This
             # stale claim is exactly what Gate 2 will flag as informational drift.
             calendar=CalendarAsset(
-                title="🚀 Feature Launch v1.0",
+                title="Feature Launch v1.0",
                 iso_date="2026-07-03",
                 human_date="This Friday",
                 status=StatusTag.ON_TRACK,
@@ -80,7 +80,7 @@ def canvas_for_tick(tick: int) -> GenerativeCanvas:
             ),
             alerts=[
                 PreMortemAlert(
-                    headline="🔮 Predictive Pre-Mortem: implementation contradicts milestone",
+                    headline="Predictive Pre-Mortem: implementation contradicts milestone",
                     severity=Severity.HIGH,
                     detail=(
                         "GitHub execution feed reports Stripe webhooks failing with a "
@@ -99,13 +99,13 @@ def canvas_for_tick(tick: int) -> GenerativeCanvas:
             actions=[
                 ActionButton(
                     key="act_open_incident",
-                    label="🛠 Open Incident on CHK-41",
+                    label="Open Incident on CHK-41",
                     toast="Incident opened against Jira CHK-41 (Stripe webhooks).",
                     audit_action="Opened incident on CHK-41 from pre-mortem alert",
                 ),
                 ActionButton(
                     key="act_ping_dev",
-                    label="💬 Ping Bob for ETA",
+                    label="Ping Bob for ETA",
                     toast="Drafted a Slack message to Bob requesting a fix ETA.",
                     audit_action="Drafted Slack message to Bob (Dev) requesting ETA",
                 ),
@@ -116,7 +116,7 @@ def canvas_for_tick(tick: int) -> GenerativeCanvas:
     return GenerativeCanvas(
         tick=2,
         calendar=CalendarAsset(
-            title="🚀 Feature Launch v1.0",
+            title="Feature Launch v1.0",
             iso_date="2026-07-07",
             human_date="Next Tuesday",
             status=StatusTag.DELAYED,
@@ -125,7 +125,7 @@ def canvas_for_tick(tick: int) -> GenerativeCanvas:
         ),
         alerts=[
             PreMortemAlert(
-                headline="🔻 Downstream risk: $50K campaign blind spot",
+                headline="Downstream risk: $50K campaign blind spot",
                 severity=Severity.CRITICAL,
                 detail=(
                     "Delaying launch to Tuesday creates a 24-hour blind spot for the "
@@ -145,19 +145,19 @@ def canvas_for_tick(tick: int) -> GenerativeCanvas:
         actions=[
             ActionButton(
                 key="act_sync_jira",
-                label="⚡ Sync Jira to Tuesday",
+                label="Sync Jira to Tuesday",
                 toast="Jira CHK-41 due date synced to Next Tuesday (2026-07-07).",
                 audit_action="Synced Jira CHK-41 milestone to Tuesday 2026-07-07",
             ),
             ActionButton(
                 key="act_draft_slack",
-                label="💬 Draft Automated Slack Warning",
+                label="Draft Automated Slack Warning",
                 toast="Drafted automated Slack warning to Growth about the campaign lock.",
                 audit_action="Drafted automated Slack warning to Carol (Growth) re: $50K lock",
             ),
             ActionButton(
                 key="act_hold_campaign",
-                label="🛑 Request 24h Campaign Hold",
+                label="Request 24h Campaign Hold",
                 toast="Requested a 24-hour hold on the LinkedIn campaign.",
                 audit_action="Requested 24h hold on LinkedIn campaign:linkedin-q3",
             ),

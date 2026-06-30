@@ -83,7 +83,7 @@ def _malformed_candidate() -> dict:
     """Deliberately broken payload to prove Gate 1 rejects structural anomalies:
     invalid enum + wrong-typed date + missing required field."""
     return {
-        "title": "🚀 Feature Launch v1.0",
+        "title": "Feature Launch v1.0",
         "status": "PROBABLY_FINE",   # not a StatusTag
         "iso_date": 20260703,        # int, not str
         "payment_rail": "Stripe API",
