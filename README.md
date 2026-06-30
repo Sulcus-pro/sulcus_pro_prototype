@@ -2,98 +2,126 @@
 <img src="assets/sulcus_logo_sm.png" width="140" alt="Sulcus"/>
 
 # Sulcus.pro
-### The Autonomous Corporate Nervous System
+### Autonomous Corporate Intelligence — NovaCorp
 
-*Living operational memory that ingests, contradicts, sleeps, and heals — then renders generative UI instead of text.*
+*A live, multi-department operational intelligence prototype: real Supabase-backed event data, a dual-gate guardrail engine, a circadian memory-consolidation loop, and a Claude-powered chat layer.*
 
 </div>
 
 ---
 
-## What this is
+## What this is (v2)
 
-Sulcus is a self-contained, interactive prototype of a next-generation corporate intelligence engine. It moves past static Vector-RAG by treating company data as a **continuous stream of living events**, then uses a nightly **Circadian Consolidation Loop** to garbage-collect obsolete vectors, reconcile contradictions, and rewrite its long-term knowledge graph.
+Sulcus.pro v2 simulates **NovaCorp**, a B2B SaaS company, across 8 departments (Engineering, Product, Sales, Marketing, Finance, HR, Legal, DevOps). A standalone generator seeds a 10-tick operational story arc into Supabase — normal operations, emerging problems, a cross-department crisis, then resolution — and the Streamlit app reads that live data to drive department dashboards, an evolving calendar, an audit trail, and a Claude-powered chat agent.
 
-It is **not** a single mock script with hardcoded numbers. It is a small modular engine where the trust metrics are **genuinely computed**.
+v2 keeps the original evaluation engine intact and replaces everything around it:
 
-### The four pillars (all real code, not stubs)
+| Kept (untouched evaluation logic) | Replaced (data layer, ingestion, UI) |
+|---|---|
+| `sulcus/schemas.py` — Pydantic v2 data contracts | `supabase_setup.sql` / `supabase_client.py` — the data layer |
+| `sulcus/guardrails.py` — Gate 1 schema shield + Gate 2 grounding loop | `generator.py` — standalone NovaCorp event generator (batch + `--schedule` live mode) |
+| `sulcus/circadian.py` — nightly consolidation loop (now tag-driven, not hardcoded IDs) | `sulcus/ingestion.py` — `SupabaseConnector` replacing the old mock connectors |
+| `sulcus/state_engine.py` — tick state machine | `sulcus/storyline.py` — builds the canvas from real events instead of a fixed script |
+| | `app.py` — full 3-column rebuild: live event feed, department tabs, evolving calendar, chat |
 
-| Pillar | Module | What it actually does |
+### The four pillars
+
+| Pillar | Module | What it does |
 |---|---|---|
-| **The Ears** — Ingestion Stream | `sulcus/ingestion.py` | Append-only event log fed by 3 pluggable connectors (Slack, GitHub, CRM). Supports tombstoning + corpus extraction. |
-| **The Storyline** — State Engine | `sulcus/state_engine.py` | Deterministic tick state machine. Each `advance()` ingests new events, runs guardrails, writes audit trail. |
-| **The Shields** — Dual Guardrails | `sulcus/guardrails.py` | **Gate 1**: live Pydantic v2 schema validation (+ a deliberately malformed payload that gets quarantined to prove the shield is live). **Gate 2**: token-grounded faithfulness + context-precision scoring against the raw corpus. |
-| **The Mouth** — Generative UI | `sulcus/generative_ui.py` | Renders typed canvas objects into custom HTML/CSS assets (calendar, pre-mortem, 3×3 risk matrix, terminal console) — no text generation. |
-
-The **Circadian loop** (`sulcus/circadian.py`) fires on Tick 2: it sweeps the conflicting Slack/GitHub vectors, GCs the obsolete Stripe dependencies, and rewrites the graph from Friday → Tuesday.
-
----
-
-## The metrics are computed, not faked
-
-This is the important part for anyone evaluating the project. The faithfulness and precision scores in the Transparency Center are **derived at runtime** by comparing the generated canvas claims against the token corpus of the active ingestion events — not hardcoded constants.
-
-Observed (and test-asserted) progression as you advance the storyline:
-
-| Tick | Story | Faithfulness | Gate 2 | Why |
-|---|---|---|---|---|
-| 0 | Ideal plan | **1.00** | PASSED | Every claim grounded in source events |
-| 1 | Hidden crisis | **0.40** | WARNING | GitHub failure contradicts the PM milestone — drift detected |
-| 2 | Pivot + circadian | **0.98** | PASSED | Conflict reconciled, obsolete vectors tombstoned |
-
-Schema validation holds `0` live errors throughout while quarantining `3` malformed candidates each tick — proving Gate 1 is actively running, not decorative.
+| **The Ears** — Ingestion | `sulcus/ingestion.py` | Polls the Supabase `events` table per tick and converts rows into canonical `IngestionEvent`s. |
+| **The Storyline** — State Engine | `sulcus/state_engine.py` | Tick state machine. Each `advance()` ingests new events, runs guardrails, writes the audit trail. |
+| **The Shields** — Dual Guardrails | `sulcus/guardrails.py` | **Gate 1**: live Pydantic v2 schema validation (+ a deliberately malformed payload quarantined to prove the shield is live). **Gate 2**: token-grounded faithfulness + context-precision scoring against the real event corpus. |
+| **The Brain** — Circadian Loop | `sulcus/circadian.py` | Fires at Tick 8 (the resolution/pivot phase): sweeps events tagged `contradiction`, tombstones events tagged `obsolete_on_pivot`, rewrites the knowledge graph. |
 
 ---
 
 ## Run it locally
 
+### 1. Set up Supabase
+
+1. Create a Supabase project.
+2. Open the SQL Editor and run `supabase_setup.sql` — it creates `events`, `audit_log`, `chat_history`, their indexes, and open RLS policies suitable for a demo.
+3. Copy `.streamlit/secrets.toml.example` to `.streamlit/secrets.toml` and fill in:
+
+```toml
+SUPABASE_URL = "your-project-url"
+SUPABASE_KEY = "your-anon-or-publishable-key"
+ANTHROPIC_API_KEY = "your-key"   # optional — can also be entered in the app UI
+```
+
+`.streamlit/secrets.toml` is gitignored — never commit it.
+
+### 2. Install dependencies
+
 ```bash
 pip install -r requirements.txt
+```
+
+### 3. Seed NovaCorp's event data
+
+```bash
+python generator.py
+```
+
+This inserts 60+ events spanning all 8 departments and ticks 0-9 (normal operations -> problems emerging -> crisis -> resolution).
+
+Optionally, run it in live mode in a separate terminal to keep inserting 2-3 new events every 5 minutes (uses APScheduler, runs independently of the Streamlit app):
+
+```bash
+python generator.py --schedule
+```
+
+### 4. Run the app
+
+```bash
 streamlit run app.py
 ```
 
-Opens at `http://localhost:8501`. Click **Advance Simulation Storyline** to walk Tick 0 → 1 → 2.
+Opens at `http://localhost:8501`.
 
-Requirements: Python 3.9+, `streamlit>=1.36`, `pandas>=2.0`, `pydantic>=2.6`.
+---
+
+## Using the app
+
+- **Sidebar** — filter by department, source, and risk level; use the tick slider or the **Advance** button to move through the story; **Reset** returns to Tick 0. Per-department live event counts update as you move through ticks.
+- **Left panel** — the live event feed: source/department/risk badges, actor, full event text, and a "View Risk" expander with the risk rationale. A red banner appears when a critical event is active.
+- **Center panel** — one tab per department (KPIs + filtered event cards + a Healthy/At Risk/Critical status), plus an **Audit Trail** tab showing the Temporal Brain history grouped by tick.
+- **Right panel** — enter a demo Anthropic API key (stored only in `st.session_state`, never logged), browse the evolving July 2026 calendar (color-coded by risk, click a date to see that day's events), and chat with Sulcus, which is grounded in the last 20 real NovaCorp events.
+- **Bottom** — the Transparency Center: Schema Errors, Faithfulness Score, Hallucination Suppression, and total Events Processed, plus the live Gate 1 / Gate 2 / Circadian terminal log.
 
 ---
 
 ## Project layout
 
 ```
-sulcus/
-├── app.py                  # Streamlit UI orchestration (split-screen, tabs, transparency center)
+sulcus/                       (repo root)
+├── app.py                    # Streamlit UI — 3-column layout, filters, chat, calendar
+├── generator.py               # Standalone NovaCorp event generator (batch + --schedule)
+├── supabase_setup.sql         # events / audit_log / chat_history schema + indexes + RLS
+├── supabase_client.py         # shared Supabase client (st.secrets or env vars)
 ├── requirements.txt
 ├── README.md
-├── .streamlit/config.toml  # dark theme, violet primary
+├── .streamlit/
+│   ├── config.toml            # dark theme, violet primary
+│   └── secrets.toml.example   # copy to secrets.toml and fill in
 ├── assets/
-│   ├── sulcus_logo.png      # original 2000x2000
-│   └── sulcus_logo_sm.png   # 512px header thumbnail
-└── sulcus/                  # the engine package
-    ├── schemas.py           # Pydantic v2 models (events, canvas, guardrail reports)
-    ├── ingestion.py         # connectors + append-only stream  (The Ears)
-    ├── storyline.py         # per-tick typed canvas builder
-    ├── guardrails.py        # Gate 1 schema shield + Gate 2 eval loop  (The Shields)
-    ├── circadian.py         # nightly consolidation / graph rewrite
-    ├── state_engine.py      # tick state machine  (The Storyline)
-    └── generative_ui.py     # HTML/CSS asset renderers  (The Mouth)
+│   ├── sulcus_logo.png
+│   └── sulcus_logo_sm.png
+└── sulcus/                    # the engine package (evaluation logic kept intact)
+    ├── schemas.py              # Pydantic v2 models
+    ├── ingestion.py            # SupabaseConnector + append-only stream
+    ├── storyline.py            # builds the per-tick canvas from real events
+    ├── guardrails.py           # Gate 1 schema shield + Gate 2 eval loop
+    ├── circadian.py            # tag-driven nightly consolidation
+    ├── state_engine.py         # tick state machine
+    └── generative_ui.py        # brand header, terminal console, audit timeline
 ```
-
----
-
-## Deploying to sulcus.pro — read this first
-
-You bought the domain `sulcus.pro`. Pointing it at this app takes one extra step depending on host, because **Streamlit Community Cloud (the free `*.streamlit.app` tier) does not support custom domains.** Three honest paths:
-
-1. **Render / Railway / Fly.io (recommended).** Deploy the repo as a web service with start command `streamlit run app.py --server.port $PORT --server.address 0.0.0.0`, then add `sulcus.pro` as a custom domain in the host's dashboard and set the DNS records they give you. All three support custom domains directly (Render & Fly on paid/hobby tiers, Railway with its domain feature).
-2. **Cloudflare reverse proxy in front of Streamlit Cloud.** Deploy free to `your-app.streamlit.app`, then put `sulcus.pro` on Cloudflare and proxy to it. Works, but it's a workaround and websocket config can be fiddly.
-3. **Your own VPS** (DigitalOcean/EC2) behind nginx + a Let's Encrypt cert for `sulcus.pro`. Most control, most setup.
-
-For a demo you want to share quickly: ship to Streamlit Cloud first (free, 2 minutes, gives a working `*.streamlit.app` link), then graduate to Render + `sulcus.pro` when you want the branded URL.
 
 ---
 
 ## Notes
 
-- A benign `use_container_width` deprecation warning may appear in logs (Streamlit is migrating to `width=`). It does not affect the app and is safe until the deprecation date.
-- Everything is deterministic — the same tick always produces the same graph state, which makes the eval scores reproducible and defensible.
+- No emojis anywhere in the UI, code, or copy — only plain text and color-coded badges.
+- All Supabase queries handle empty results and connection failures gracefully (the app runs, with empty panels, even with no Supabase credentials configured).
+- The chat panel never crashes if no Anthropic API key is available — it shows a plain message asking for one instead.
+- `generator.py` has no Streamlit import and runs fully standalone (cron job, background worker, or a second terminal next to `streamlit run app.py`).

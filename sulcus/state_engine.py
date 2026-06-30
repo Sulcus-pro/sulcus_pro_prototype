@@ -4,13 +4,14 @@ sulcus.state_engine
 
 The Evolving State Engine -- the storyline state machine.
 
-Each call to :meth:`SulcusEngine.advance` performs one tick of the corporate
-pivot:
+Each call to :meth:`SulcusEngine.advance` performs one tick of the NovaCorp
+operational story:
 
-    1. Poll every ingestion connector for the new tick and append events.
-    2. If the tick is a consolidation tick, run the circadian loop (sweep,
+    1. Poll the Supabase-backed ingestion connector for the new tick and
+       append the events that landed there.
+    2. If the tick is the consolidation tick, run the circadian loop (sweep,
        garbage-collect, rewrite the graph).
-    3. Build the typed Generative Canvas for the new tick.
+    3. Build the typed Generative Canvas for the new tick from real events.
     4. Run both guardrail gates against it.
     5. Append audit entries to the Temporal Brain history.
 
@@ -21,7 +22,7 @@ it only reads the engine's snapshot and calls ``advance()``.
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import List
 
 from .circadian import run_consolidation
@@ -35,10 +36,9 @@ from .schemas import (
 )
 from .storyline import TICK_TITLES, TOTAL_TICKS, canvas_for_tick
 
-# The tick at which the autonomous circadian consolidation fires.
-CONSOLIDATION_TICK = 2
-
-_EPOCH = datetime(2026, 6, 29, 9, 0, 0)
+# The tick at which the autonomous circadian consolidation fires -- aligned
+# with the start of the "resolution and pivot" phase of the story arc.
+CONSOLIDATION_TICK = 8
 
 
 class SulcusEngine:
@@ -58,19 +58,19 @@ class SulcusEngine:
         """Initialise the world at Tick 0."""
         new_events = self.stream.ingest_tick(0)
         self._record_ingestion_audit(0, new_events)
-        self.canvas = canvas_for_tick(0)
+        self.canvas = canvas_for_tick(0, self.stream)
         self.terminal_log = self._render_log_header(0)
         self.report = evaluate(self.canvas, self.stream, 0)
         self.terminal_log += self.report.schema_log + self.report.eval_log
         self.audit.insert(
             0,
             AuditEntry(
-                timestamp=_EPOCH,
+                timestamp=datetime.utcnow(),
                 tick=0,
                 actor="Sulcus Core",
                 actor_kind=ActorKind.SYSTEM,
                 action="System initialised",
-                detail="Ingestion connectors LIVE (Slack, GitHub, CRM). Baseline plan ingested.",
+                detail="Supabase ingestion connector LIVE. NovaCorp baseline events ingested.",
             ),
         )
 
@@ -98,7 +98,7 @@ class SulcusEngine:
             self.audit = cons_audit + self.audit
 
         # 3) Build the new canvas.
-        self.canvas = canvas_for_tick(tick)
+        self.canvas = canvas_for_tick(tick, self.stream)
 
         # 4) Guardrails.
         self.report = evaluate(self.canvas, self.stream, tick)
@@ -120,7 +120,7 @@ class SulcusEngine:
         self.audit.insert(
             0,
             AuditEntry(
-                timestamp=_EPOCH + timedelta(minutes=self.tick * 15 + 12),
+                timestamp=datetime.utcnow(),
                 tick=self.tick,
                 actor=actor,
                 actor_kind=ActorKind.HUMAN,
@@ -139,7 +139,7 @@ class SulcusEngine:
                     tick=tick,
                     actor=e.user,
                     actor_kind=ActorKind.HUMAN,
-                    action=f"Event ingested via {e.source if isinstance(e.source, str) else e.source.value}",
+                    action=f"Event ingested via {e.channel}",
                     detail=e.text,
                 ),
             )

@@ -5,16 +5,21 @@ sulcus.circadian
 The Circadian Consolidation Loop -- Sulcus's sleep cycle and the headline
 capability of the platform.
 
-Traditional vector RAG accumulates contradictions forever: the Friday plan and
-the failing-Stripe commit both sit in the index, and retrieval returns whichever
-is more similar to the query. Sulcus instead runs a periodic *consolidation*
-pass that behaves like memory reconsolidation during sleep -- it wakes up, sweeps
-the raw conflicting events, decides which are obsolete, garbage-collects their
-long-term vectors (tombstones them), and rewrites the knowledge graph to settle
-on a single coherent state.
+Traditional vector RAG accumulates contradictions forever: an early plan and
+a later contradicting event both sit in the index, and retrieval returns
+whichever is more similar to the query. Sulcus instead runs a periodic
+*consolidation* pass that behaves like memory reconsolidation during sleep --
+it wakes up, sweeps the raw conflicting events, decides which are obsolete,
+garbage-collects their long-term vectors (tombstones them), and rewrites the
+knowledge graph to settle on a single coherent state.
 
-The loop is what turns Tick 1's WARNING (informational drift) into Tick 2's
-healed, internally-consistent corpus.
+v1 hardcoded the three specific event IDs involved in its single Stripe/
+Friday narrative. v2 generalizes the same algorithm to any event stream: it
+sweeps events tagged ``contradiction`` (the crisis), tombstones every event
+tagged ``obsolete_on_pivot`` (the assumptions that crisis invalidated), and
+logs which departments were involved -- the consolidation logic and the
+Temporal Brain audit trail it writes are unchanged in spirit, just driven by
+tags instead of literal IDs.
 """
 
 from __future__ import annotations
@@ -26,14 +31,11 @@ from .ingestion import IngestionStream
 from .schemas import ActorKind, AuditEntry
 
 
-# Events made obsolete by the Tick-2 strategic pivot. Their vectors are GC'd from
-# the live knowledge graph; the rows remain visible in the audit ticker (marked
-# GC) for full traceability.
-_OBSOLETE_ON_PIVOT = [
-    "slack-000",     # Alice: "launch Friday via Stripe"
-    "jira-CHK-41",   # "Integrate Stripe Webhooks"  (superseded by bypass)
-    "gh-9af3c1",     # Bob: "Stripe webhooks failing 500"
-]
+def _dept_of(event) -> str:
+    for tag in event.tags:
+        if tag.startswith("dept:"):
+            return tag.split(":", 1)[1]
+    return "Unknown"
 
 
 def run_consolidation(stream: IngestionStream, tick: int) -> Tuple[List[str], List[AuditEntry]]:
@@ -44,41 +46,46 @@ def run_consolidation(stream: IngestionStream, tick: int) -> Tuple[List[str], Li
     """
     log: List[str] = []
     audit: List[AuditEntry] = []
-    now = datetime(2026, 6, 29, 2, 14, 0)  # the loop runs in the small hours
+    now = datetime.utcnow()
+
+    contradictions = [e for e in stream.events if "contradiction" in e.tags]
+    obsolete = [
+        e for e in stream.events
+        if "obsolete_on_pivot" in e.tags and e.event_id not in stream.tombstones
+    ]
+    depts = sorted({_dept_of(e) for e in contradictions} | {_dept_of(e) for e in obsolete})
 
     log.append("")
     log.append("[CIRCADIAN] ───────────────────────────────────────────────")
     log.append("[CIRCADIAN] Nightly Consolidation Loop — system entering sleep cycle.")
     log.append("[CIRCADIAN] Phase 1/5  Sweeping raw ephemeral event log for conflicts...")
 
-    # Identify the conflicting cluster.
-    slack_friday = next((e for e in stream.events if e.event_id == "slack-000"), None)
-    bob_commit = next((e for e in stream.events if e.event_id == "gh-9af3c1"), None)
-    slack_pivot = next((e for e in stream.events if e.event_id == "slack-002"), None)
-
-    if slack_friday and bob_commit:
+    if contradictions:
+        dept_list = ", ".join(depts) if depts else "multiple departments"
         log.append(
-            "[CIRCADIAN]   ↳ Conflict cluster found: Alice@slack-000 (Friday/Stripe) "
-            "⟂ Bob@gh-9af3c1 (Stripe 500 mismatch)."
+            f"[CIRCADIAN]   ↳ Conflict cluster found: {len(contradictions)} contradiction "
+            f"event(s) across {dept_list}."
         )
-    log.append("[CIRCADIAN] Phase 2/5  Resolving authority — newest milestone intent wins.")
-    if slack_pivot:
+    else:
+        log.append("[CIRCADIAN]   ↳ No active contradiction events found.")
+
+    log.append("[CIRCADIAN] Phase 2/5  Resolving authority — newest reconciled intent wins.")
+    if contradictions:
+        latest = max(contradictions, key=lambda e: e.timestamp)
         log.append(
-            "[CIRCADIAN]   ↳ Authoritative intent = Alice@slack-002 "
-            "(delay → Tuesday, bypass Stripe)."
+            f"[CIRCADIAN]   ↳ Authoritative intent = {latest.user}@{latest.event_id[:8]} "
+            f"({_dept_of(latest)})."
         )
 
     log.append("[CIRCADIAN] Phase 3/5  Garbage-collecting obsolete dependency vectors...")
-    gc_ids = [eid for eid in _OBSOLETE_ON_PIVOT if eid not in stream.tombstones]
+    gc_ids = [e.event_id for e in obsolete]
     stream.tombstone(gc_ids)
-    for eid in gc_ids:
-        log.append(f"[CIRCADIAN]   ↳ GC vector {eid} → tombstoned (excluded from live graph).")
+    for e in obsolete:
+        log.append(f"[CIRCADIAN]   ↳ GC vector {e.event_id[:8]} → tombstoned (excluded from live graph).")
 
     log.append("[CIRCADIAN] Phase 4/5  Rewriting long-term knowledge graph...")
-    log.append("[CIRCADIAN]   ↳ launch.date:  2026-07-03 (Fri)  ⇒  2026-07-07 (Tue)")
-    log.append("[CIRCADIAN]   ↳ launch.rail:  stripe-api         ⇒  bypassed")
-    log.append("[CIRCADIAN]   ↳ launch.status: on-track          ⇒  delayed")
-    log.append("[CIRCADIAN]   ↳ edge added:  launch.delay ──impacts──▶ campaign:linkedin-q3")
+    for dept in depts:
+        log.append(f"[CIRCADIAN]   ↳ {dept}: stale plan vectors superseded ⇒ pivot state adopted.")
 
     log.append("[CIRCADIAN] Phase 5/5  Re-embedding consolidated state. Conflicts: 0.")
     log.append("[CIRCADIAN] Consolidation complete — graph internally consistent. Waking up.")
@@ -92,8 +99,9 @@ def run_consolidation(stream: IngestionStream, tick: int) -> Tuple[List[str], Li
             actor_kind=ActorKind.SYSTEM,
             action="Nightly memory consolidation",
             detail=(
-                f"Swept Friday/Stripe conflict, GC'd {len(gc_ids)} obsolete vector(s), "
-                "rewrote knowledge graph to Tuesday launch with Stripe bypassed."
+                f"Swept {len(contradictions)} contradiction event(s) across "
+                f"{', '.join(depts) if depts else 'no departments'}, GC'd {len(gc_ids)} "
+                "obsolete vector(s), rewrote knowledge graph to the post-crisis pivot state."
             ),
         )
     )
@@ -104,7 +112,7 @@ def run_consolidation(stream: IngestionStream, tick: int) -> Tuple[List[str], Li
             actor="Knowledge Graph",
             actor_kind=ActorKind.SYSTEM,
             action="Long-term vector rewrite",
-            detail="launch.date → 2026-07-07; launch.rail → bypassed; status → delayed.",
+            detail=f"{len(gc_ids)} obsolete vector(s) excluded from the live grounding corpus.",
         )
     )
     return log, audit
