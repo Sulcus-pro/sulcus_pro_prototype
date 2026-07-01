@@ -17,7 +17,7 @@ from __future__ import annotations
 import base64
 import os
 import uuid
-from datetime import date, datetime
+from datetime import datetime
 from pathlib import Path
 from typing import List, Optional
 
@@ -36,7 +36,7 @@ st.set_page_config(
     page_title="Sulcus.pro — Autonomous Corporate Intelligence",
     page_icon=str(ASSETS / "sulcus_logo_sm.png") if (ASSETS / "sulcus_logo_sm.png").exists() else None,
     layout="wide",
-    initial_sidebar_state="expanded",
+    initial_sidebar_state="collapsed",
 )
 
 DEPARTMENTS = [
@@ -74,6 +74,7 @@ SOURCE_COLORS = {
     "workday": "#0F766E",
     "notion": "#475569",
 }
+STATUS_COLORS = {"Healthy": ui.GREEN, "At Risk": ui.AMBER, "Critical": ui.RED}
 
 
 # --------------------------------------------------------------------------- #
@@ -108,6 +109,16 @@ st.markdown(
           to {{ opacity: 1; transform: translateY(0); }}
       }}
       div[data-testid="stPopoverBody"] {{ background:{ui.PANEL}; }}
+
+      /* --- Sidebar overlays content instead of pushing it --- */
+      section[data-testid="stSidebar"] {{
+          position: fixed;
+          z-index: 999;
+      }}
+      .main .block-container {{
+          padding-left: 1rem;
+          transition: none;
+      }}
     </style>
     """,
     unsafe_allow_html=True,
@@ -138,6 +149,12 @@ if "tick_slider" not in st.session_state:
     st.session_state.tick_slider = st.session_state.engine.tick
 if "anthropic_api_key" not in st.session_state:
     st.session_state.anthropic_api_key = ""
+if "chat_open" not in st.session_state:
+    st.session_state.chat_open = False
+if "selected_dept" not in st.session_state:
+    st.session_state.selected_dept = None
+if "selected_date" not in st.session_state:
+    st.session_state.selected_date = None
 
 engine: SulcusEngine = st.session_state.engine
 supabase = get_supabase_client()
@@ -266,6 +283,16 @@ def _fmt_ts(value: Optional[str]) -> str:
         return str(value)
 
 
+def _fmt_time(value: Optional[str]) -> str:
+    if not value:
+        return "--:--"
+    try:
+        dt = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        return dt.strftime("%H:%M")
+    except Exception:
+        return "--:--"
+
+
 def _esc(text: str) -> str:
     return (text or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
@@ -342,13 +369,171 @@ if supabase is None:
 
 
 # --------------------------------------------------------------------------- #
+# Floating chat widget — toggle button + panel, fixed bottom-right.
+# Rendered early so it lives high in the DOM; CSS position:fixed keeps it
+# pinned to the viewport corner regardless of where the rest of the page
+# scrolls, and it stays out of the main dashboard/calendar/audit panels.
+# --------------------------------------------------------------------------- #
+def render_chat_bubble(role: str, content: str) -> None:
+    is_user = role == "user"
+    justify = "flex-end" if is_user else "flex-start"
+    bg = "#2A3050" if is_user else "#242A3D"
+    st.markdown(
+        f"""<div style="display:flex;justify-content:{justify};margin-bottom:8px;">
+          <div style="max-width:85%;background:{bg};color:{ui.TEXT};padding:8px 12px;
+               border-radius:12px;font-size:12.5px;line-height:1.45;white-space:pre-wrap;">
+            {_esc(content)}</div>
+        </div>""",
+        unsafe_allow_html=True,
+    )
+
+
+def run_sulcus_chat(prompt: str) -> str:
+    api_key = resolve_anthropic_key()
+    if not api_key:
+        return "Enter an Anthropic API key above to enable Sulcus intelligence."
+    try:
+        import anthropic
+
+        context_events = fetch_last_n_events(20)
+        context_lines = "\n".join(
+            f"- [{e.get('department')}/{e.get('source')}] "
+            f"{e.get('actor')}: {e.get('content')} "
+            f"(risk={e.get('risk_level')}, tick={e.get('tick')})"
+            for e in context_events
+        ) or "No events available."
+
+        system_prompt = (
+            "You are Sulcus, the autonomous corporate intelligence agent for "
+            "NovaCorp. You have access to all operational events across "
+            "departments. Be concise, direct, and risk-aware. Never "
+            "hallucinate — only reference events that exist in the context "
+            "provided.\n\nRecent NovaCorp events:\n" + context_lines
+        )
+
+        client = anthropic.Anthropic(api_key=api_key)
+        history = [
+            {"role": m["role"], "content": m["content"]}
+            for m in st.session_state.chat_messages
+            if m["role"] in ("user", "assistant")
+        ]
+        response = client.messages.create(
+            model="claude-sonnet-4-6",
+            max_tokens=700,
+            system=system_prompt,
+            messages=history,
+        )
+        return "".join(
+            block.text for block in response.content if hasattr(block, "text")
+        ) or "No response generated."
+    except Exception as exc:
+        return f"Sulcus could not reach the model: {exc}"
+
+
+def render_floating_chat() -> None:
+    bubble_svg = (
+        "data:image/svg+xml;utf8,"
+        "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='white'>"
+        "<path d='M4 4h16a1 1 0 0 1 1 1v11a1 1 0 0 1-1 1H9l-4.3 3.3A1 1 0 0 1 3 19.5V5a1 1 0 0 1 1-1z'/>"
+        "</svg>"
+    )
+    st.markdown(
+        f"""
+        <style>
+          .st-key-chat_toggle_btn button {{
+              position: fixed !important; bottom: 28px; right: 28px; z-index: 9999;
+              width: 56px; height: 56px; border-radius: 50% !important;
+              background: {ui.VIOLET} !important; border: none !important;
+              font-size: 0 !important; background-image: url("{bubble_svg}") !important;
+              background-repeat: no-repeat !important; background-position: center !important;
+              background-size: 24px 24px !important;
+              box-shadow: 0 6px 20px rgba(124,58,237,0.55) !important;
+          }}
+          .st-key-chat_panel_wrap {{
+              position: fixed !important; bottom: 96px; right: 28px; z-index: 9998;
+              width: 380px; max-width: 90vw; max-height: 520px; overflow-y: auto;
+              background: #1A1F2E; border: 1px solid #2E3550; border-radius: 16px;
+              box-shadow: 0 12px 40px rgba(0,0,0,0.55); padding: 14px 14px 8px 14px;
+          }}
+          .st-key-chat_close_btn button {{
+              width: 28px; height: 28px; padding: 0; border-radius: 8px;
+          }}
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    if st.button("Chat", key="chat_toggle_btn"):
+        st.session_state.chat_open = not st.session_state.chat_open
+
+    if not st.session_state.chat_open:
+        return
+
+    with st.container(key="chat_panel_wrap"):
+        head_l, head_r = st.columns([5, 1])
+        with head_l:
+            st.markdown(
+                f"""<div style="color:{ui.TEXT};font-weight:800;font-size:14px;
+                     padding-top:4px;">Sulcus Intelligence</div>""",
+                unsafe_allow_html=True,
+            )
+        with head_r:
+            if st.button("X", key="chat_close_btn"):
+                st.session_state.chat_open = False
+                st.rerun()
+
+        st.text_input(
+            "Demo API Key",
+            type="password",
+            placeholder="sk-ant-...",
+            key="anthropic_api_key",
+            label_visibility="collapsed",
+            help="Anthropic API key for this demo session. Stored only in this browser session.",
+        )
+
+        message_area = st.container(height=260)
+        with message_area:
+            if not st.session_state.chat_messages:
+                st.caption("Ask Sulcus about NovaCorp's risks, departments, or status.")
+            for msg in st.session_state.chat_messages:
+                render_chat_bubble(msg["role"], msg["content"])
+
+        prompt = st.chat_input("Message Sulcus...", key="floating_chat_input")
+        if prompt:
+            st.session_state.chat_messages.append({"role": "user", "content": prompt})
+            save_chat_turn("user", prompt)
+            with message_area:
+                render_chat_bubble("user", prompt)
+                thinking = st.empty()
+                thinking.markdown(
+                    f'<div style="color:{ui.MUTED};font-size:12px;padding:4px 0;">'
+                    f"Sulcus is thinking...</div>",
+                    unsafe_allow_html=True,
+                )
+                answer = run_sulcus_chat(prompt)
+                thinking.empty()
+                render_chat_bubble("assistant", answer)
+            st.session_state.chat_messages.append({"role": "assistant", "content": answer})
+            save_chat_turn("assistant", answer)
+
+
+render_floating_chat()
+
+
+# --------------------------------------------------------------------------- #
 # Sidebar — filters & controls
 # --------------------------------------------------------------------------- #
 with st.sidebar:
     st.markdown(ui.section_label("Filters"), unsafe_allow_html=True)
-    sel_departments = st.multiselect("Department", DEPARTMENTS, default=DEPARTMENTS)
-    sel_sources = st.multiselect("Source", SOURCES, default=SOURCES)
-    sel_risks = st.multiselect("Risk", RISK_LEVELS, default=RISK_LEVELS)
+    sel_departments = st.multiselect(
+        "Departments", DEPARTMENTS, default=[], placeholder="All Departments"
+    )
+    sel_sources = st.multiselect(
+        "Sources", SOURCES, default=[], placeholder="All Sources"
+    )
+    sel_risks = st.multiselect(
+        "Risk Level", RISK_LEVELS, default=[], placeholder="All Levels"
+    )
 
     st.markdown(ui.section_label("Simulation"), unsafe_allow_html=True)
     c1, c2 = st.columns(2)
@@ -392,20 +577,21 @@ with st.sidebar:
 
 
 # --------------------------------------------------------------------------- #
-# Shared filtered dataset for this run
+# Shared filtered dataset for this run. Empty filter selections mean "show
+# all" — fetch_events only applies an .in_() clause when the list is non-empty.
 # --------------------------------------------------------------------------- #
 all_visible_events = fetch_events(sel_departments, sel_sources, sel_risks, engine.tick)
 critical_events = [e for e in all_visible_events if e.get("risk_level") == "critical"]
 high_or_critical = [e for e in all_visible_events if e.get("risk_level") in ("high", "critical")]
 
 
-left, center, right = st.columns([3, 4, 3], gap="medium")
+tab_dashboard, tab_calendar, tab_audit = st.tabs(["Dashboard", "Calendar", "Audit Trail"])
 
 
 # --------------------------------------------------------------------------- #
-# LEFT — Live Event Feed
+# DASHBOARD — Live Event Feed + Department Intelligence
 # --------------------------------------------------------------------------- #
-with left:
+with tab_dashboard:
     head_l, head_r = st.columns([3, 1])
     with head_l:
         st.markdown(ui.section_label("Live Event Feed"), unsafe_allow_html=True)
@@ -429,74 +615,89 @@ with left:
             unsafe_allow_html=True,
         )
 
-    if not all_visible_events:
-        st.caption("No events match the current filters.")
-    for row in all_visible_events[:80]:
-        render_event_card(row)
+    with st.container(height=520, border=False):
+        if not all_visible_events:
+            st.caption("No events match the current filters.")
+        for row in all_visible_events[:80]:
+            render_event_card(row)
 
-
-# --------------------------------------------------------------------------- #
-# CENTER — Department Intelligence
-# --------------------------------------------------------------------------- #
-with center:
+    st.markdown("<div style='height:18px'></div>", unsafe_allow_html=True)
     st.markdown(ui.section_label("Department Intelligence"), unsafe_allow_html=True)
-    dept_tabs = st.tabs(DEPARTMENTS + ["Audit Trail"])
 
-    for tab, dept in zip(dept_tabs[:-1], DEPARTMENTS):
-        with tab:
-            dept_rows = [e for e in all_visible_events if e.get("department") == dept]
-            this_tick_rows = [e for e in dept_rows if e.get("tick") == engine.tick]
-            avg_risk = (
-                sum(RISK_SCORE.get(r.get("risk_level"), 1) for r in dept_rows) / len(dept_rows)
-                if dept_rows else 0.0
-            )
-            open_incidents = sum(1 for r in dept_rows if r.get("risk_level") in ("high", "critical"))
-            status = department_status(dept_rows)
-            status_color = {"Healthy": ui.GREEN, "At Risk": ui.AMBER, "Critical": ui.RED}[status]
-
-            k1, k2, k3, k4 = st.columns(4)
-            k1.metric("Events This Tick", len(this_tick_rows))
-            k2.metric("Risk Score", f"{avg_risk:.1f} / 4")
-            k3.metric("Open Incidents", open_incidents)
-            k4.markdown(
-                f"""<div style="margin-top:6px;">
-                  <div style="font-size:11px;color:{ui.MUTED};letter-spacing:1px;
-                       text-transform:uppercase;">Status</div>
-                  <div style="font-size:18px;font-weight:800;color:{status_color};
-                       margin-top:4px;">{status}</div>
+    dept_cols = st.columns(8)
+    for col, dept in zip(dept_cols, DEPARTMENTS):
+        dept_rows = [e for e in all_visible_events if e.get("department") == dept]
+        this_tick_rows = [e for e in dept_rows if e.get("tick") == engine.tick]
+        status = department_status(this_tick_rows)
+        status_color = STATUS_COLORS[status]
+        with col:
+            st.markdown(
+                f"""<div style="text-align:center;">
+                  <div style="font-size:12px;font-weight:800;color:{ui.TEXT};
+                       margin-bottom:6px;white-space:nowrap;overflow:hidden;
+                       text-overflow:ellipsis;">{_esc(dept.split()[0])}</div>
+                  <span style="display:inline-block;background:{status_color};color:#0B0E1A;
+                       padding:2px 10px;border-radius:999px;font-size:10px;font-weight:800;
+                       letter-spacing:0.3px;">{status}</span>
+                  <div style="font-size:16px;font-weight:800;color:{ui.MUTED};margin-top:6px;">
+                       {len(this_tick_rows)}</div>
                 </div>""",
                 unsafe_allow_html=True,
             )
-            st.markdown("<div style='height:6px'></div>", unsafe_allow_html=True)
+            if st.button("View", key=f"deptbtn_{dept}", use_container_width=True):
+                st.session_state.selected_dept = (
+                    None if st.session_state.selected_dept == dept else dept
+                )
 
-            if not dept_rows:
-                st.caption(f"No {dept} events match the current filters.")
-            for row in dept_rows[:40]:
+    if st.session_state.selected_dept:
+        sel_dept = st.session_state.selected_dept
+        sel_dept_rows = [e for e in all_visible_events if e.get("department") == sel_dept]
+        st.markdown("<div style='height:14px'></div>", unsafe_allow_html=True)
+        st.markdown(
+            ui.section_label(f"{sel_dept} — Event Detail"), unsafe_allow_html=True
+        )
+        with st.container(height=400, border=False):
+            if not sel_dept_rows:
+                st.caption(f"No {sel_dept} events match the current filters.")
+            for row in sel_dept_rows[:60]:
                 render_event_card(row)
 
-    with dept_tabs[-1]:
-        st.caption("Temporal Brain · human actions and autonomous system actions, grouped by tick.")
-        st.markdown(ui.audit_timeline(engine.audit), unsafe_allow_html=True)
-
 
 # --------------------------------------------------------------------------- #
-# RIGHT — API key, Evolving Calendar, Chat
+# CALENDAR — full month grid, click a date to inspect its events
 # --------------------------------------------------------------------------- #
-with right:
-    st.text_input(
-        "Demo API Key",
-        type="password",
-        placeholder="sk-ant-...",
-        key="anthropic_api_key",
-        help="Anthropic API key for this demo session. Stored only in this browser session.",
-    )
-
+with tab_calendar:
     st.markdown(ui.section_label("Evolving Calendar — July 2026"), unsafe_allow_html=True)
 
-    epoch = date(2026, 6, 30)
+    epoch = date_for_tick(0)
     cal_grid = cal_module.Calendar(firstweekday=0)
     month_dates = list(cal_grid.itermonthdates(2026, 7))
     weeks = [month_dates[i:i + 7] for i in range(0, len(month_dates), 7)]
+
+    day_events = {}
+    for row in all_visible_events:
+        d = date_for_tick(int(row.get("tick", 0)))
+        day_events.setdefault(d, []).append(row)
+
+    cal_css_rules = []
+    for week in weeks:
+        for d in week:
+            tick_for_day = (d - epoch).days
+            evs = day_events.get(d, [])
+            if evs:
+                worst = max(evs, key=lambda r: RISK_SCORE.get(r.get("risk_level"), 0))
+                color = ui.RISK_COLORS.get(worst.get("risk_level"), "#262C40")
+            elif 0 <= tick_for_day < TOTAL_TICKS:
+                color = "#1B2030"
+            else:
+                color = "#12151F"
+            text_color = ui.TEXT if d.month == 7 else ui.MUTED
+            key = f"cal_{d.isoformat()}"
+            cal_css_rules.append(
+                f'.st-key-{key} button {{ background:{color} !important; '
+                f'color:{text_color} !important; border:1px solid #2A3043 !important; }}'
+            )
+    st.markdown(f"<style>{''.join(cal_css_rules)}</style>", unsafe_allow_html=True)
 
     st.markdown(
         f"""<div style="display:grid;grid-template-columns:repeat(7,1fr);gap:4px;
@@ -506,106 +707,51 @@ with right:
         unsafe_allow_html=True,
     )
 
-    day_events = {}
-    for row in all_visible_events:
-        d = date_for_tick(int(row.get("tick", 0)))
-        day_events.setdefault(d, []).append(row)
-
     for week in weeks:
         cols = st.columns(7)
         for col, d in zip(cols, week):
             with col:
-                in_month = d.month == 7
-                tick_for_day = (d - epoch).days
-                evs = day_events.get(d, [])
-                if evs:
-                    worst = max(evs, key=lambda r: RISK_SCORE.get(r.get("risk_level"), 0))
-                    block_color = ui.RISK_COLORS.get(worst.get("risk_level"), "#262C40")
-                else:
-                    block_color = "#1B2030" if (0 <= tick_for_day < TOTAL_TICKS) else "#12151F"
-                opacity = "1" if in_month else "0.35"
-                st.markdown(
-                    f"""<div style="opacity:{opacity};background:{block_color}55;
-                         border:1px solid {block_color};border-radius:8px;padding:4px 0;
-                         text-align:center;font-size:11px;color:{ui.TEXT};margin-bottom:2px;">
-                      {d.day}</div>""",
-                    unsafe_allow_html=True,
-                )
-                with st.popover(f"{len(evs)}", use_container_width=True):
-                    st.markdown(f"**{d.strftime('%B %d, %Y')}**")
-                    if not evs:
-                        st.caption("No events on this date.")
-                    for e in evs[:10]:
-                        st.markdown(
-                            f"- **{_esc(e.get('department',''))}** "
-                            f"({e.get('risk_level','')}) — {_esc(e.get('content',''))[:90]}"
-                        )
+                key = f"cal_{d.isoformat()}"
+                if st.button(str(d.day), key=key, use_container_width=True):
+                    st.session_state.selected_date = d.isoformat()
 
-    st.markdown("<div style='height:10px'></div>", unsafe_allow_html=True)
-    st.markdown(ui.section_label("Sulcus — Ask the Intelligence Layer"), unsafe_allow_html=True)
+    st.markdown("<div style='height:16px'></div>", unsafe_allow_html=True)
+    st.markdown(ui.section_label("Events On Selected Date"), unsafe_allow_html=True)
 
-    chat_box = st.container(height=320)
-    with chat_box:
-        for msg in st.session_state.chat_messages:
-            with st.chat_message(msg["role"]):
-                st.markdown(msg["content"])
+    if not st.session_state.selected_date:
+        st.caption("Select a date on the calendar to view events.")
+    else:
+        sel_d = st.session_state.selected_date
+        try:
+            sel_date_obj = datetime.fromisoformat(sel_d).date()
+        except Exception:
+            sel_date_obj = None
+        day_rows = day_events.get(sel_date_obj, []) if sel_date_obj else []
 
-    prompt = st.chat_input("Ask Sulcus about NovaCorp's risks, departments, or status...")
-    if prompt:
-        st.session_state.chat_messages.append({"role": "user", "content": prompt})
-        save_chat_turn("user", prompt)
+        st.caption(
+            (sel_date_obj.strftime("%B %d, %Y") if sel_date_obj else sel_d)
+        )
+        if not day_rows:
+            st.caption("No events on this date.")
+        else:
+            options = [
+                f"{_fmt_time(r.get('created_at'))} — {r.get('actor','Unknown')} — "
+                f"{r.get('content','')[:60]}"
+                for r in day_rows
+            ]
+            picked = st.selectbox("Events", options, label_visibility="collapsed", key="calendar_event_pick")
+            picked_row = day_rows[options.index(picked)]
+            st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
+            render_event_card(picked_row)
 
-        api_key = resolve_anthropic_key()
-        with chat_box:
-            with st.chat_message("user"):
-                st.markdown(prompt)
-            with st.chat_message("assistant"):
-                if not api_key:
-                    answer = "Enter an Anthropic API key above to enable Sulcus intelligence."
-                    st.markdown(answer)
-                else:
-                    placeholder = st.empty()
-                    placeholder.markdown("Sulcus is thinking...")
-                    try:
-                        import anthropic
 
-                        context_events = fetch_last_n_events(20)
-                        context_lines = "\n".join(
-                            f"- [{e.get('department')}/{e.get('source')}] "
-                            f"{e.get('actor')}: {e.get('content')} "
-                            f"(risk={e.get('risk_level')}, tick={e.get('tick')})"
-                            for e in context_events
-                        ) or "No events available."
-
-                        system_prompt = (
-                            "You are Sulcus, the autonomous corporate intelligence agent for "
-                            "NovaCorp. You have access to all operational events across "
-                            "departments. Be concise, direct, and risk-aware. Never "
-                            "hallucinate — only reference events that exist in the context "
-                            "provided.\n\nRecent NovaCorp events:\n" + context_lines
-                        )
-
-                        client = anthropic.Anthropic(api_key=api_key)
-                        history = [
-                            {"role": m["role"], "content": m["content"]}
-                            for m in st.session_state.chat_messages
-                            if m["role"] in ("user", "assistant")
-                        ]
-                        response = client.messages.create(
-                            model="claude-sonnet-4-6",
-                            max_tokens=700,
-                            system=system_prompt,
-                            messages=history,
-                        )
-                        answer = "".join(
-                            block.text for block in response.content if hasattr(block, "text")
-                        ) or "No response generated."
-                    except Exception as exc:
-                        answer = f"Sulcus could not reach the model: {exc}"
-                    placeholder.markdown(answer)
-
-        st.session_state.chat_messages.append({"role": "assistant", "content": answer})
-        save_chat_turn("assistant", answer)
+# --------------------------------------------------------------------------- #
+# AUDIT TRAIL — Temporal Brain history, grouped by tick
+# --------------------------------------------------------------------------- #
+with tab_audit:
+    st.markdown(ui.section_label("Audit Trail"), unsafe_allow_html=True)
+    st.caption("Temporal Brain · human actions and autonomous system actions, grouped by tick.")
+    st.markdown(ui.audit_timeline(engine.audit), unsafe_allow_html=True)
 
 
 # --------------------------------------------------------------------------- #
